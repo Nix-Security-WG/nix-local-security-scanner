@@ -24,6 +24,7 @@ import Data.Time.Clock
 import Data.Time.Format.ISO8601
 import Data.Aeson
 import Data.Aeson.TH
+import Data.Functor
 import Data.Maybe
 import GHC.Generics (Generic)
 import Network.Http.Client
@@ -51,14 +52,20 @@ data NVDResponse = NVDResponse
   , _nvdresponse_vulnerabilities :: [NVDWrapper]
   } deriving (Show, Eq, Ord, Generic)
 
-newtype CVSS31Data = Cvss31Data { _cvss31data_baseSeverity :: Text }
+newtype CVSS2Metric = Cvss2Metric { _cvss2metric_baseSeverity :: Text }
     deriving (Show, Eq, Ord, Generic)
-newtype CVSS31Metric = Cvss31Metric { _cvss31metric_cvssData :: CVSS31Data }
+newtype CVSS3xData = Cvss3xData { _cvss3xdata_baseSeverity :: Text }
+    deriving (Show, Eq, Ord, Generic)
+newtype CVSS3xMetric = Cvss3xMetric { _cvss3xmetric_cvssData :: CVSS3xData }
     deriving (Show, Eq, Ord, Generic)
 
 -- TODO support for non-cvss-v31 severities
-newtype Metric = Metric { _metric_cvssMetricV31 :: Maybe [CVSS31Metric] }
-    deriving (Show, Eq, Ord, Generic)
+data Metric = Metric
+  { _metric_cvssMetricV2 :: Maybe [CVSS2Metric]
+  , _metric_cvssMetricV30 :: Maybe [CVSS3xMetric]
+  , _metric_cvssMetricV31 :: Maybe [CVSS3xMetric]
+  } deriving (Show, Eq, Ord, Generic)
+
 newtype NVDWrapper = NVDWrapper { _nvdwrapper_cve :: NVDCVE }
     deriving (Show, Eq, Ord)
 
@@ -162,8 +169,9 @@ mconcat <$> sequence (deriveJSON stripType' <$>
     , ''LocalCache
     , ''CacheStatus
     , ''Metric
-    , ''CVSS31Metric
-    , ''CVSS31Data
+    , ''CVSS2Metric
+    , ''CVSS3xMetric
+    , ''CVSS3xData
     ])
 
 keywordSearch :: LogT m ann => Text -> ReaderT Parameters m NVDResponse
@@ -341,14 +349,23 @@ withApiKey f1 f = do
       Nothing -> f1
       Just apiKey' -> f (TE.encodeUtf8 $ T.pack $ apiKey')
 
+getSeverity :: NVDCVE -> Maybe Text
+getSeverity cve =
+    let
+        (severities2 :: [Text]) = concat $ maybeToList $ (_nvdcve_metrics cve) >>= _metric_cvssMetricV2 <&> (map _cvss2metric_baseSeverity)
+        (severities30 :: [Text]) = concat $ maybeToList $ (_nvdcve_metrics cve) >>= _metric_cvssMetricV30 <&> (map $ _cvss3xdata_baseSeverity . _cvss3xmetric_cvssData)
+        (severities31 :: [Text]) = concat $ maybeToList $ (_nvdcve_metrics cve) >>= _metric_cvssMetricV31 <&> (map $ _cvss3xdata_baseSeverity . _cvss3xmetric_cvssData)
+    in
+        listToMaybe $ severities31 ++ severities30 ++ severities2
+
 -- convert NVDCVE JSON data type to our internal feed-agnostic LocalVuln data model:
 convertToLocal :: LogT m ann => [NVDCVE] -> ReaderT Parameters m [[LocalVuln]]
 convertToLocal nvds = do
     excludeVendors' <- excludeVendors <$> ask
     timeLog $ Named (__FILE__ <> ":" <> (tshow (__LINE__ :: Integer))) $ flip mapM nvds $ \x -> do
       let configs = _nvdcve_configurations x
+          severity = getSeverity x
           -- TODO support for multiple or non-cvss-v31 severities
-          (severity :: Maybe Text) = fmap _cvss31data_baseSeverity $ fmap _cvss31metric_cvssData $ (_nvdcve_metrics x) >>= _metric_cvssMetricV31 >>= listToMaybe
           id' = _nvdcve_id x
           versions = case configs of
             Nothing -> []

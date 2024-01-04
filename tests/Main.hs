@@ -6,7 +6,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Main where
 
-import Debug.Trace
 import Test.Hspec
 
 import Data.Aeson
@@ -39,6 +38,13 @@ versionShouldMatch version advisoryId = do
     [advisoryParts] <- withApp def $ convertToLocal [nvdcve]
     (or $ map (\advisory -> versionInRange (Just $ T.pack version) advisory) advisoryParts) `shouldBe` True
 
+severityShouldMatch :: String -> String -> SpecWith (Arg (IO ()))
+severityShouldMatch severity advisoryId = do
+  it ("Advisory " <> advisoryId <> " should have severity " <> severity) $ do
+    Just nvdcve <- decodeFileStrict $ "tests/resources/" <> advisoryId <> ".json"
+    [[advisory]] <- withApp def $ convertToLocal [nvdcve]
+    (_vuln_severity advisory) `shouldBe` (Just $ T.pack severity)
+
 main :: IO ()
 main = hspec $ do
     describe "Parse NVD Spec" $ do
@@ -57,3 +63,5 @@ main = hspec $ do
         versionShouldNotMatch "3.0.12" "CVE-2023-2975"
     describe "Match version ranges with 4-segment versions" $ do
         versionShouldNotMatch "4.11.2" "CVE-2006-7246"
+    describe "Determine severity" $ do
+        severityShouldMatch "MEDIUM" "CVE-2016-9438"
