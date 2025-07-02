@@ -37,7 +37,7 @@ To avoid rate limiting, request an NVD API key at https://nvd.nist.gov/developer
 
 ```bash
 export NVD_API_KEY=...
-nix run github:nix-security-wg/nix-security-tracker/local-security-scanner -- --path /nix/var/nix/profiles/system
+nix run github:nix-security-wg/nix-local-security-scanner -- --path /nix/var/nix/profiles/system
 ```
 
 ### False positives
